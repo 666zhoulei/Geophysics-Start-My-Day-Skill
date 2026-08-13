@@ -1,0 +1,68 @@
+language: zh
+vault_path: "C:/Users/your-name/Documents/Obsidian Vault"
+papers_dir: 20_Research/Papers
+
+research_domains:
+  地震混采与去混采:
+    keywords:
+      - seismic deblending
+      - simultaneous source
+      - blended seismic data
+      - multisource seismic
+      - source separation
+      - sparse inversion
+    arxiv_categories: [physics.geo-ph, physics.comp-ph, eess.SP, eess.IV, cs.LG]
+    priority: 10
+
+  地震数据去噪与重建:
+    keywords:
+      - seismic denoising
+      - seismic noise attenuation
+      - seismic data reconstruction
+      - seismic interpolation
+      - ground roll attenuation
+      - low-rank
+      - seislet transform
+      - curvelet transform
+    arxiv_categories: [physics.geo-ph, eess.SP, eess.IV, cs.LG, math.NA]
+    priority: 10
+
+  波场模拟成像与反演:
+    keywords:
+      - seismic wavefield simulation
+      - full waveform inversion
+      - seismic imaging
+      - reverse time migration
+      - wavefield separation
+      - seismic tomography
+    arxiv_categories: [physics.geo-ph, physics.comp-ph, eess.IV, math.NA]
+    priority: 9
+
+  智能与物理约束地球物理:
+    keywords:
+      - machine learning geophysics
+      - deep learning seismic
+      - self-supervised seismic
+      - physics-informed neural network seismic
+      - diffusion model seismic
+      - transformer seismic
+    arxiv_categories: [physics.geo-ph, physics.comp-ph, eess.SP, eess.IV, cs.LG]
+    priority: 8
+
+preferred_venues:
+  - GEOPHYSICS
+  - IEEE Transactions on Geoscience and Remote Sensing
+  - IEEE Geoscience and Remote Sensing Letters
+  - Geophysical Journal International
+  - Geophysical Prospecting
+  - Interpretation
+  - Journal of Applied Geophysics
+
+excluded_keywords:
+  - workshop
+  - natural language processing
+  - large language model
+  - robotic manipulation
+
+# Optional. Prefer an environment variable or a local untracked config file.
+semantic_scholar_api_key: ""
