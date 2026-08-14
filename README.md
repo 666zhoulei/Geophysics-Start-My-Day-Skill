@@ -1,6 +1,7 @@
 # Geophysics Start My Day Skill
 
 面向地质资源与地质工程研究生的 Codex skills 套件。它检索地震勘探与智能地球物理论文，将每日 10 篇开放 PDF 保存到 Obsidian，并生成可直接点击本地原文的中文推荐笔记。
+<img width="958" height="2738" alt="微信图片_20260814162150" src="https://github.com/user-attachments/assets/4085f0a1-476e-4667-9d8f-14f49b171f33" />
 
 ## 功能
 
