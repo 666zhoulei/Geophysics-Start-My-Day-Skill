@@ -21,7 +21,7 @@ class FakeResponse:
         return False
 
     def read(self):
-        return b"%PDF-1.4 test"
+        return b"%PDF-1.4\ncomplete test PDF\n%%EOF\n"
 
 
 class StartMyDayGeophysicsTests(unittest.TestCase):
@@ -96,21 +96,74 @@ class StartMyDayGeophysicsTests(unittest.TestCase):
         self.assertEqual(len(search_arxiv.filter_and_score_papers([paper], config)), 1)
 
     @patch.object(search_arxiv.urllib.request, "urlopen", return_value=FakeResponse())
-    def test_download_records_local_wikilink(self, _urlopen):
-        papers = [{
+    def test_download_records_local_wikilink_atomically(self, urlopen):
+        candidates = [{
             "arxiv_id": "2601.01234",
             "title": "A seismic paper",
             "pdf_url": "https://arxiv.org/pdf/2601.01234",
         }]
         with tempfile.TemporaryDirectory() as temp_dir:
-            search_arxiv.download_top_papers(papers, temp_dir)
+            papers, failures = search_arxiv.select_top_papers(candidates, 1, temp_dir)
             self.assertTrue((Path(temp_dir) / "2601.01234.pdf").exists())
             self.assertEqual(papers[0]["local_pdf_wikilink"], "[[2601.01234.pdf|PDF]]")
+            self.assertEqual(papers[0]["download_status"], "downloaded")
+            self.assertEqual(failures, [])
+            self.assertEqual(urlopen.call_count, 1)
+            self.assertEqual(list(Path(temp_dir).glob("*.part")), [])
 
-    def test_download_fails_when_any_pdf_url_is_missing(self):
+    @patch.object(search_arxiv.urllib.request, "urlopen", return_value=FakeResponse())
+    def test_existing_arxiv_version_is_reused_without_download(self, urlopen):
         with tempfile.TemporaryDirectory() as temp_dir:
-            with self.assertRaises(RuntimeError):
-                search_arxiv.download_top_papers([{"title": "No open PDF"}], temp_dir)
+            root = Path(temp_dir)
+            existing = root / "original-local-name.pdf"
+            existing.write_bytes(b"%PDF-1.4\nexisting PDF\n%%EOF\n")
+            (root / "paper.md").write_text(
+                "---\narxiv_id: 2608.05763\ntitle: Original title\n---\n"
+                "[[original-local-name.pdf|PDF]]\n",
+                encoding="utf-8",
+            )
+            candidates = [{
+                "id": "https://arxiv.org/abs/2608.05763v9",
+                "title": "Renamed version of the paper",
+                "pdf_url": "https://arxiv.org/pdf/2608.05763v9",
+            }]
+
+            papers, failures = search_arxiv.select_top_papers(candidates, 1, temp_dir)
+
+            self.assertEqual(papers[0]["local_pdf_filename"], existing.name)
+            self.assertEqual(papers[0]["download_status"], "reused")
+            self.assertEqual(failures, [])
+            urlopen.assert_not_called()
+
+    @patch.object(search_arxiv.urllib.request, "urlopen", return_value=FakeResponse())
+    def test_missing_or_invalid_candidate_is_backfilled(self, urlopen):
+        candidates = [
+            {"title": "No open PDF"},
+            {
+                "title": "A valid replacement",
+                "pdf_url": "https://example.org/replacement.pdf",
+            },
+        ]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            papers, failures = search_arxiv.select_top_papers(candidates, 1, temp_dir)
+
+            self.assertEqual([paper["title"] for paper in papers], ["A valid replacement"])
+            self.assertEqual(len(failures), 1)
+            self.assertIn("No open PDF", failures[0])
+            self.assertEqual(urlopen.call_count, 1)
+
+    def test_incomplete_existing_pdf_is_not_reused(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            broken = Path(temp_dir) / "A_seismic_paper.pdf"
+            broken.write_bytes(b"%PDF-1.4\npartial")
+            index = search_arxiv.build_existing_pdf_index(temp_dir)
+            self.assertIsNone(
+                search_arxiv.find_existing_pdf({"title": "A seismic paper"}, index)
+            )
+
+    def test_arxiv_versions_have_same_canonical_id(self):
+        self.assertEqual(search_arxiv.canonical_arxiv_id("2608.05763v1"), "2608.05763")
+        self.assertEqual(search_arxiv.canonical_arxiv_id("2608.05763v9"), "2608.05763")
 
     def test_semantic_scholar_open_access_pdf_is_supported(self):
         paper = {"openAccessPdf": {"url": "https://example.org/paper.pdf"}}

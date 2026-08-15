@@ -1,6 +1,6 @@
 ---
 name: start-my-day
-description: 根据 Zotero 馆藏画像和研究兴趣配置，检索地质资源与地质工程（重点为勘探地球物理、地震数据处理与智能地球物理）的 arXiv 与 Semantic Scholar 论文，下载每日 10 篇原文并生成带本地 PDF 链接的 Obsidian 推荐笔记。Use when the user asks to start the day, create a geophysics paper brief, or generate recommendations for a specified date.
+description: 根据 Zotero 馆藏画像和研究兴趣配置，检索地质资源与地质工程（重点为勘探地球物理、地震数据处理与智能地球物理）的 arXiv 与 Semantic Scholar 论文，复用论文库中已有原文、仅下载缺失 PDF，并生成每日 10 篇带本地链接的 Obsidian 推荐笔记。Use when the user asks to start the day, create a geophysics paper brief, or generate recommendations for a specified date.
 ---
 
 # Language Setting / 语言设置
@@ -213,7 +213,10 @@ cat arxiv_filtered.json
 从 `arxiv_filtered.json` 中读取筛选后的论文列表：
 - 包含前 10 篇高评分论文
 - 每篇论文包含完整信息：ID、标题、作者、摘要、评分、匹配领域
-- 必须将所有 10 篇高评分论文下载到这个目录下：`$OBSIDIAN_VAULT_PATH/20_Research/Papers/`
+- 必须确保所有 10 篇高评分论文在 `$OBSIDIAN_VAULT_PATH/20_Research/Papers/` 中有可用 PDF；已有同一论文时复用现有文件，只下载缺失 PDF
+- 下载前递归扫描论文目录中的 `.pdf` 和 `.md`，按去除版本号的 arXiv ID 优先、规范化标题其次、精确文件名最后查重
+- 命中已有 PDF 时保留原文件名并写入 `local_pdf_filename`，禁止再次发起网络下载或另存一份同内容文件
+- 新下载先写入临时 `.part` 文件，校验 `%PDF-` 文件头和 `%%EOF` 结尾后原子落盘；失败时删除临时文件并按评分顺序补入下一候选
 - 后面笔记文件中的 PDF 本地文件名必须链接到 `$OBSIDIAN_VAULT_PATH/20_Research/Papers/` 目录下的本地 PDF 文件
 - 若高分候选没有合法开放 PDF 地址，跳过该候选并按评分顺序补入下一篇，直至凑足 10 篇；不足 10 篇时停止并报告，不生成残缺笔记
 
@@ -474,6 +477,7 @@ python scripts/link_keywords.py \
 - **其他论文**：只写基本信息，不插入图片
 - **保持快速**：让用户快速了解当日推荐
 - **避免重复**：检查已推荐论文
+- **避免重复下载**：搜索脚本必须复用已有 PDF；同一 arXiv ID 的不同版本或标题标点/连字符差异不得生成第二份文件
 - **自动关键词链接**：
   - 在生成推荐笔记后，自动扫描现有笔记
   - 将文本中的关键词（如 BLIP、CLIP 等）替换为 wikilink
@@ -555,7 +559,8 @@ python scripts/link_keywords.py \
    - 从 `arxiv_filtered.json` 中读取筛选结果
    - 获取前 10 篇高评分论文
    - 每篇论文包含：ID、标题、作者、摘要、评分、匹配领域
-   - 验证 10 个 `local_pdf_filename` 对应的文件都存在于 `$OBSIDIAN_VAULT_PATH/20_Research/Papers/`；缺少任意文件则停止生成笔记并报告下载失败
+   - 验证 10 个 `local_pdf_filename` 对应的文件都存在于 `$OBSIDIAN_VAULT_PATH/20_Research/Papers/`；已有文件应显示 `download_status: reused`，新文件显示 `download_status: downloaded`
+   - 某个下载失败时由脚本按评分顺序补入下一候选；候选池耗尽后仍不足 10 篇才停止并报告
 
 5. **生成推荐笔记（包含关键词链接）**
    - 创建 `10_Daily/YYYY-MM-DD${NOTE_SUFFIX}.md`（使用目标日期，`NOTE_SUFFIX` 依语言设置）

@@ -1,4 +1,4 @@
 interface:
   display_name: "Geophysics Daily Paper Brief"
-  short_description: "Find geophysics papers and link local PDFs in Obsidian"
-  default_prompt: "Use $start-my-day to create today's geophysics paper recommendations, download all 10 PDFs, and link them in my Obsidian vault."
+  short_description: "Find geophysics papers and reuse local PDFs in Obsidian"
+  default_prompt: "Use $start-my-day to create today's geophysics paper recommendations, reuse PDFs already in my library, download only missing papers, and link all 10 in my Obsidian vault."

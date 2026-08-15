@@ -163,6 +163,107 @@ def safe_pdf_filename(paper: Dict) -> str:
     return f"{stem}.pdf"
 
 
+def normalize_title(title: str) -> str:
+    """Normalize a title or filename stem for duplicate matching."""
+    title = title.replace('_', ' ').replace('-', ' ').casefold()
+    return re.sub(r'[\W_]+', '', title, flags=re.UNICODE)
+
+
+def canonical_arxiv_id(value: str) -> str:
+    """Extract an arXiv identifier and remove its version suffix."""
+    if not value:
+        return ''
+    match = re.search(r'(?i)([a-z-]+(?:\.[a-z]{2})?/\d{7}|\d{4}\.\d{4,5})(?:v\d+)?', str(value))
+    return match.group(1).lower() if match else ''
+
+
+def paper_arxiv_id(paper: Dict) -> str:
+    """Resolve a version-independent arXiv ID from all supported paper schemas."""
+    external_ids = paper.get('externalIds') or {}
+    for value in (
+        paper.get('arxiv_id'), paper.get('arxivId'), external_ids.get('ArXiv'),
+        paper.get('id'), paper.get('url'), paper.get('pdf_url'),
+    ):
+        arxiv_id = canonical_arxiv_id(value)
+        if arxiv_id:
+            return arxiv_id
+    return ''
+
+
+def valid_pdf(path: Path) -> bool:
+    """Reject empty, partial, and obvious non-PDF files without extra dependencies."""
+    try:
+        size = path.stat().st_size
+        if size < 10:
+            return False
+        with path.open('rb') as stream:
+            if stream.read(5) != b'%PDF-':
+                return False
+            stream.seek(max(0, size - 4096))
+            return b'%%EOF' in stream.read()
+    except OSError:
+        return False
+
+
+def build_existing_pdf_index(download_dir: str) -> Dict[str, Dict[str, Path]]:
+    """Index existing PDFs using filenames plus paper-note metadata."""
+    root = Path(download_dir).expanduser().resolve()
+    index: Dict[str, Dict[str, Path]] = {
+        'by_id': {},
+        'by_title': {},
+        'by_name': {},
+    }
+
+    for pdf in root.rglob('*.pdf') if root.exists() else []:
+        if not valid_pdf(pdf):
+            logger.warning("Ignoring invalid existing PDF: %s", pdf)
+            continue
+        index['by_name'].setdefault(pdf.name.casefold(), pdf)
+        title_key = normalize_title(pdf.stem)
+        if title_key:
+            index['by_title'].setdefault(title_key, pdf)
+        arxiv_id = canonical_arxiv_id(pdf.stem)
+        if arxiv_id:
+            index['by_id'].setdefault(arxiv_id, pdf)
+
+    for note in root.rglob('*.md') if root.exists() else []:
+        try:
+            text = note.read_text(encoding='utf-8', errors='ignore')
+        except OSError:
+            continue
+        id_match = re.search(r'(?mi)^\s*arxiv_id:\s*["\']?([^\s"\']+)', text)
+        title_match = re.search(r'(?mi)^\s*title:\s*["\']?(.+?)["\']?\s*$', text)
+        pdf_match = re.search(r'\[\[([^\]|]+\.pdf)(?:\|[^\]]*)?\]\]', text, re.IGNORECASE)
+        if not pdf_match:
+            continue
+        pdf = index['by_name'].get(Path(pdf_match.group(1)).name.casefold())
+        if not pdf:
+            continue
+        arxiv_id = canonical_arxiv_id(id_match.group(1)) if id_match else ''
+        title_key = normalize_title(title_match.group(1)) if title_match else ''
+        if arxiv_id:
+            index['by_id'].setdefault(arxiv_id, pdf)
+        if title_key:
+            index['by_title'].setdefault(title_key, pdf)
+
+    logger.info(
+        "Indexed %d existing PDFs (%d arXiv IDs, %d titles)",
+        len(index['by_name']), len(index['by_id']), len(index['by_title'])
+    )
+    return index
+
+
+def find_existing_pdf(paper: Dict, index: Dict[str, Dict[str, Path]]) -> Optional[Path]:
+    """Find the same paper locally by arXiv ID, normalized title, or exact filename."""
+    arxiv_id = paper_arxiv_id(paper)
+    if arxiv_id and arxiv_id in index['by_id']:
+        return index['by_id'][arxiv_id]
+    title_key = normalize_title(paper.get('title', ''))
+    if title_key and title_key in index['by_title']:
+        return index['by_title'][title_key]
+    return index['by_name'].get(safe_pdf_filename(paper).casefold())
+
+
 def paper_pdf_url(paper: Dict) -> Optional[str]:
     """Resolve a lawful direct PDF URL exposed by arXiv or Semantic Scholar."""
     if paper.get('pdf_url'):
@@ -175,34 +276,80 @@ def paper_pdf_url(paper: Dict) -> Optional[str]:
     return open_access.get('url') if isinstance(open_access, dict) else None
 
 
-def download_top_papers(papers: List[Dict], download_dir: str) -> None:
-    """Download every selected paper and record its Obsidian local filename."""
-    destination = Path(download_dir).expanduser()
+def ensure_local_pdf(
+    paper: Dict,
+    destination: Path,
+    existing_index: Dict[str, Dict[str, Path]],
+) -> None:
+    """Reuse a matching local PDF or atomically download and validate one copy."""
+    existing = find_existing_pdf(paper, existing_index)
+    if existing and valid_pdf(existing):
+        paper['local_pdf_filename'] = existing.name
+        paper['local_pdf_wikilink'] = f"[[{existing.name}|PDF]]"
+        paper['download_status'] = 'reused'
+        logger.info("Reusing existing PDF: %s", existing)
+        return
+
+    url = paper_pdf_url(paper)
+    if not url:
+        raise ValueError("no open PDF URL")
+
+    filename = safe_pdf_filename(paper)
+    target = destination / filename
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.part")
+    try:
+        request = urllib.request.Request(url, headers={'User-Agent': 'start-my-day/1.0'})
+        with urllib.request.urlopen(request, timeout=60) as response:
+            content = response.read()
+        temporary.write_bytes(content)
+        if not valid_pdf(temporary):
+            raise ValueError("downloaded file is incomplete or not a valid PDF")
+        os.replace(temporary, target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+    paper['local_pdf_filename'] = filename
+    paper['local_pdf_wikilink'] = f"[[{filename}|PDF]]"
+    paper['download_status'] = 'downloaded'
+    existing_index['by_name'][filename.casefold()] = target
+    title_key = normalize_title(paper.get('title', ''))
+    if title_key:
+        existing_index['by_title'][title_key] = target
+    arxiv_id = paper_arxiv_id(paper)
+    if arxiv_id:
+        existing_index['by_id'][arxiv_id] = target
+
+
+def select_top_papers(
+    candidates: List[Dict],
+    top_n: int,
+    download_dir: str = '',
+) -> Tuple[List[Dict], List[str]]:
+    """Select N papers, reusing duplicates and backfilling failed downloads."""
+    if not download_dir:
+        selected = candidates[:top_n]
+        for paper in selected:
+            paper['note_filename'] = title_to_note_filename(paper.get('title', ''))
+        return selected, []
+
+    destination = Path(download_dir).expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
+    existing_index = build_existing_pdf_index(str(destination))
+    selected = []
     failures = []
-    for paper in papers:
-        url = paper_pdf_url(paper)
-        filename = safe_pdf_filename(paper)
-        target = destination / filename
-        if not url:
-            failures.append(f"{paper.get('title', 'Untitled')}: no open PDF URL")
-            continue
+    for paper in candidates:
+        if len(selected) >= top_n:
+            break
+        paper['note_filename'] = title_to_note_filename(paper.get('title', ''))
         try:
-            if not target.exists() or target.stat().st_size == 0:
-                request = urllib.request.Request(url, headers={'User-Agent': 'start-my-day/1.0'})
-                with urllib.request.urlopen(request, timeout=60) as response, open(target, 'wb') as output:
-                    content = response.read()
-                    if not content.startswith(b'%PDF-'):
-                        raise ValueError(f"downloaded content is not a PDF ({response.headers.get('Content-Type')})")
-                    output.write(content)
-            elif not target.read_bytes().startswith(b'%PDF-'):
-                raise ValueError("existing local file is not a valid PDF")
-            paper['local_pdf_filename'] = filename
-            paper['local_pdf_wikilink'] = f"[[{filename}|PDF]]"
+            ensure_local_pdf(paper, destination, existing_index)
+            selected.append(paper)
         except Exception as exc:
-            failures.append(f"{paper.get('title', 'Untitled')}: {exc}")
-    if failures:
-        raise RuntimeError("Could not download every selected PDF:\n- " + "\n- ".join(failures))
+            message = f"{paper.get('title', 'Untitled')}: {exc}"
+            failures.append(message)
+            logger.warning("Skipping candidate after PDF failure: %s", message)
+    return selected, failures
 
 
 def calculate_date_windows(target_date: Optional[datetime] = None, days: int = 30) -> Tuple[datetime, datetime, datetime, datetime]:
@@ -1239,32 +1386,16 @@ def main():
         logger.warning("No papers matched the criteria!")
         return 1
 
-    # 需要本地原文时，先跳过没有合法开放 PDF 地址的候选，再按原评分顺序补足 N 篇。
-    selectable_papers = unique_papers
-    if args.download_dir:
-        selectable_papers = [paper for paper in unique_papers if paper_pdf_url(paper)]
-        skipped = len(unique_papers) - len(selectable_papers)
-        if skipped:
-            logger.info("Skipped %d candidates without an open PDF URL", skipped)
-
-    # 取前 N 篇
-    top_papers = selectable_papers[:args.top_n]
+    # 复用已存在的同一论文 PDF；仅下载缺失文件。下载失败时按评分顺序自动补位。
+    top_papers, download_failures = select_top_papers(
+        unique_papers,
+        args.top_n,
+        args.download_dir,
+    )
 
     if len(top_papers) != args.top_n:
         logger.error("Expected %d selected papers, but only %d matched", args.top_n, len(top_papers))
         return 1
-
-    # 为每篇论文补充 note_filename，与 generate_note.py 的文件名规则保持一致
-    # 这样 start-my-day 生成的 wikilink 可以直接使用此字段，无需自行推断
-    for paper in top_papers:
-        paper['note_filename'] = title_to_note_filename(paper.get('title', ''))
-
-    if args.download_dir:
-        try:
-            download_top_papers(top_papers, args.download_dir)
-        except RuntimeError as exc:
-            logger.error("%s", exc)
-            return 1
 
     # 准备输出
     output = {
@@ -1282,6 +1413,9 @@ def main():
         'total_recent': len(recent_papers),
         'total_hot': len(hot_papers),
         'total_unique': len(unique_papers),
+        'reused_existing_pdfs': sum(p.get('download_status') == 'reused' for p in top_papers),
+        'downloaded_pdfs': sum(p.get('download_status') == 'downloaded' for p in top_papers),
+        'download_failures': download_failures,
         'top_papers': top_papers
     }
 
