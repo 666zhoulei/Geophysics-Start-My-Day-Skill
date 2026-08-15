@@ -1,22 +1,25 @@
 # Geophysics Start My Day Skill
 
-面向地球物理学的 Codex skills 套件。它检索地震勘探与智能地球物理论文，将每日 10 篇开放 PDF 保存到 Obsidian，并生成可直接点击本地原文的中文推荐笔记。
+面向地质资源与地质工程研究生的 Codex skills 套件。它检索地震勘探与智能地球物理论文，排除 Obsidian 论文库中已经存在的论文，只下载并推荐 10 篇全新论文，生成可直接点击本地原文的中文推荐笔记。
+
 <p align="center">
-    <img src="https://github.com/user-attachments/assets/1dab6aed-a392-401a-90a9-013ed01b3946" alt="Geophysics Start My Day 生成的 Obsidian 每日论文推荐" width="720">
+  <a href="docs/assets/daily-paper-brief-preview.png">
+    <img src="docs/assets/daily-paper-brief-preview.png" alt="Geophysics Start My Day 生成的 Obsidian 每日论文推荐" width="720">
+  </a>
 </p>
 
 <p align="center"><sub>Obsidian 中的每日论文推荐效果，点击图片查看原尺寸。</sub></p>
-
 
 ## 功能
 
 - 从 arXiv 检索最近论文，并可用 Semantic Scholar 补充近一年热门论文。
 - 重点覆盖去混采、去噪与重建、时频/速度分析、波场模拟、成像反演、PINN 与地震深度学习。
 - 根据相关性、新近性、热门度和摘要质量排序。
-- 强制保存 10 篇本地 PDF；不可下载的候选会按排名顺延补位。
+- 按 arXiv ID、规范化标题、PDF 和论文笔记查重，历史论文直接剔除并由后续候选补位。
+- 新下载使用临时文件完整性校验后原子落盘；不可下载或损坏的候选按排名顺延补位。
 - 在 Obsidian 中使用 `[[本地文件名.pdf|PDF]]`，点击即可打开原文。
 - 自动为前三篇生成详细分析并提取论文图片。
-- 扫描已有笔记，避免重复并建立研究图谱。
+- 扫描已有 PDF 与笔记，确保每日推荐只包含全新论文，并建立研究图谱。
 - 已修正宽泛分类误筛选：`cs.LG`、`eess.IV`、`eess.SP` 不能在没有地球物理关键词时单独使论文入选。
 
 ## 仓库结构
